@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>South Shore FSA Territory Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+:root{--ink:#172033;--muted:#667085;--line:#dfe5ee;--bg:#f4f7fb;--accent:#2f64d6}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink)}
+#app{height:100%;display:grid;grid-template-columns:370px 1fr;background:var(--bg)}#sidebar{background:#fff;border-right:1px solid var(--line);overflow:auto;padding:18px;z-index:1000}#map{height:100%;min-height:480px}
+h1{font-size:22px;margin:0 0 5px}.sub{font-size:13px;color:var(--muted);line-height:1.4;margin-bottom:14px}.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}.title{font-weight:750;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.row{display:flex;gap:8px;align-items:center}
+input[type=text],textarea{width:100%;border:1px solid #ccd5e2;border-radius:8px;padding:8px 9px;font:inherit}textarea{min-height:78px;resize:vertical}button{border:0;border-radius:8px;background:var(--accent);color:#fff;padding:8px 11px;font-weight:650;cursor:pointer}button.secondary{background:#edf2f8;color:#24324a}button.danger{background:#fff0f0;color:#b42318}button.small{padding:5px 7px;font-size:12px}
+.layer{display:grid;grid-template-columns:24px 1fr 24px 28px;gap:7px;align-items:center;padding:6px 0;border-top:1px solid #eef2f6}.layer:first-child{border-top:0}.layer input[type=color]{width:22px;height:22px;border:0;padding:0;background:none}.layer input[type=text]{padding:5px 6px;font-size:13px}.mini{font-size:12px;color:var(--muted);line-height:1.35}#editor{display:none}.fsaTitle{font-size:21px;font-weight:800;margin-bottom:8px}.checks label{display:flex;gap:7px;align-items:center;padding:4px 0;font-size:13px}.dot{width:10px;height:10px;border-radius:50%;display:inline-block}.badge{display:inline-block;border-radius:999px;background:#eef2f7;padding:3px 7px;font-size:11px;margin:2px 3px 2px 0}#status{font-size:12px;color:var(--muted);margin-top:7px}.leaflet-tooltip.fsa-label{font-weight:800;background:rgba(255,255,255,.9);border:1px solid #c8d0dc;box-shadow:none;padding:2px 5px}
+@media(max-width:760px){#app{grid-template-columns:1fr;grid-template-rows:47% 53%}#sidebar{border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="app">
+<aside id="sidebar">
+<h1>FSA Territory Map</h1>
+<div class="sub">South Shore of Montréal and surrounding Québec. Click an FSA to assign it to one or more territory layers and keep notes.</div>
+<div class="card"><div class="title">Find an FSA</div><div class="row"><input id="search" type="text" maxlength="3" placeholder="e.g. J4K"><button id="find">Find</button></div><div id="status">Loading Québec FSA boundaries…</div></div>
+<div class="card"><div class="title"><span>Territory layers</span><button id="addLayer" class="small">+ Layer</button></div><div id="layers"></div><div class="mini" style="margin-top:7px">An FSA can belong to multiple layers. Overlapping memberships are shown with stacked colored outlines.</div></div>
+<div id="editor" class="card"><div id="fsaTitle" class="fsaTitle"></div><div class="mini">Assign to layers</div><div id="checks" class="checks"></div><div class="mini" style="margin:9px 0 5px">Notes for this FSA</div><textarea id="note" placeholder="Salesperson, customers, delivery days, opportunities, restrictions, etc."></textarea><div class="row" style="margin-top:8px"><button id="save">Save</button><button id="clear" class="secondary">Clear FSA</button></div></div>
+<div class="card"><div class="title">Data</div><div class="row"><button id="export" class="secondary">Export JSON</button><button id="reset" class="danger">Reset</button></div><div class="mini" style="margin-top:7px">Your work saves automatically in this browser.</div></div>
+<div class="mini">Boundary source: Statistics Canada 2021 Census Forward Sortation Area cartographic boundary layer. Census FSAs may differ from current Canada Post operational delivery boundaries.</div>
+</aside><main id="map"></main></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const STORE='fsa-territory-map-v1';
+const SERVICE='https://geo.statcan.gc.ca/geo_wa/rest/services/2021/Cartographic_boundary_files/MapServer/14/query';
+const map=L.map('map',{preferCanvas:true}).setView([45.49,-73.43],10);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+let state=loadState(), fsaLayers={}, fsaFeatures={}, selected=null, overlap=L.layerGroup().addTo(map), geoLayer=null;
+function uid(){return crypto.randomUUID?crypto.randomUUID():Math.random().toString(36).slice(2)+Date.now()}
+function defaultState(){const id=uid();return{layers:[{id,name:'Territory 1',color:'#d64c4c',visible:true}],fsas:{J4G:{layers:[id],note:''},J4H:{layers:[id],note:''},J4K:{layers:[id],note:''},J4L:{layers:[id],note:''},J4N:{layers:[id],note:''}}}}
+function loadState(){try{const x=JSON.parse(localStorage.getItem(STORE));return x&&x.layers&&x.fsas?x:defaultState()}catch(e){return defaultState()}}
+function persist(){localStorage.setItem(STORE,JSON.stringify(state))}
+function rec(code){if(!state.fsas[code])state.fsas[code]={layers:[],note:''};return state.fsas[code]}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function visibleMemberships(code){return (state.fsas[code]?.layers||[]).map(id=>state.layers.find(x=>x.id===id)).filter(x=>x&&x.visible)}
+function style(feature){const code=feature.properties.CFSAUID,mem=visibleMemberships(code),p=mem[0];return{color:p?p.color:'#708090',weight:p?2.4:1,fillColor:p?p.color:'#fff',fillOpacity:p?.visible?.20 ?? .025,opacity:.9}}
+function renderLayers(){const el=document.getElementById('layers');el.innerHTML='';state.layers.forEach(x=>{const d=document.createElement('div');d.className='layer';d.innerHTML=`<input type="color" value="${x.color}"><input type="text" value="${esc(x.name)}"><input type="checkbox" ${x.visible?'checked':''} title="Show/hide"><button class="small danger" title="Delete">×</button>`;const [color,name,vis,del]=d.children;color.oninput=()=>{x.color=color.value;persist();refresh();renderEditor()};name.onchange=()=>{x.name=name.value.trim()||'Untitled';persist();renderEditor()};vis.onchange=()=>{x.visible=vis.checked;persist();refresh()};del.onclick=()=>{if(state.layers.length===1)return alert('Keep at least one layer.');if(!confirm(`Delete "${x.name}"?`))return;state.layers=state.layers.filter(y=>y.id!==x.id);Object.values(state.fsas).forEach(r=>r.layers=r.layers.filter(id=>id!==x.id));persist();renderLayers();renderEditor();refresh()};el.appendChild(d)})}
+function refresh(){if(geoLayer)geoLayer.setStyle(style);overlap.clearLayers();Object.entries(fsaFeatures).forEach(([code,feature])=>{const mem=visibleMemberships(code);if(mem.length<2)return;mem.slice(0,5).forEach((x,i)=>L.geoJSON(feature,{renderer:L.canvas(),style:{color:x.color,weight:11-i*1.8,opacity:.95,fillOpacity:0}}).addTo(overlap));L.geoJSON(feature,{renderer:L.canvas(),style:{color:'#fff',weight:1.1,opacity:.9,fillOpacity:0}}).addTo(overlap)})}
+function select(code,zoom=true){code=(code||'').toUpperCase();const layer=fsaLayers[code];if(!layer){document.getElementById('status').textContent=`${code} was not found in Québec.`;return}selected=code;rec(code);document.getElementById('editor').style.display='block';document.getElementById('fsaTitle').textContent=code;renderEditor();if(zoom)map.fitBounds(layer.getBounds(),{padding:[35,35],maxZoom:13});document.getElementById('status').textContent=`Selected ${code}.`}
+function renderEditor(){if(!selected)return;const r=rec(selected),el=document.getElementById('checks');el.innerHTML='';state.layers.forEach(x=>{const lab=document.createElement('label');lab.innerHTML=`<input type="checkbox" ${r.layers.includes(x.id)?'checked':''}><span class="dot" style="background:${x.color}"></span><span>${esc(x.name)}</span>`;const cb=lab.querySelector('input');cb.onchange=()=>{if(cb.checked){if(!r.layers.includes(x.id))r.layers.push(x.id)}else r.layers=r.layers.filter(id=>id!==x.id);persist();refresh()};el.appendChild(lab)});document.getElementById('note').value=r.note||''}
+async function loadData(){try{const params=new URLSearchParams({where:"PRUID='24'",outFields:'CFSAUID,PRUID,PRNAME',returnGeometry:'true',outSR:'4326',f:'geojson'});const res=await fetch(SERVICE+'?'+params.toString());if(!res.ok)throw new Error('HTTP '+res.status);const data=await res.json();geoLayer=L.geoJSON(data,{renderer:L.canvas(),style,onEachFeature:(feature,layer)=>{const code=feature.properties.CFSAUID;if(!code)return;fsaFeatures[code]=feature;fsaLayers[code]=layer;layer.bindTooltip(code,{sticky:true,className:'fsa-label'});layer.on('click',()=>select(code,false))}}).addTo(map);refresh();document.getElementById('status').textContent=`Ready — ${data.features.length} Québec FSAs loaded.`}catch(e){console.error(e);document.getElementById('status').textContent='Could not load Statistics Canada FSA boundaries. Please reload the page.'}}
+document.getElementById('find').onclick=()=>{const c=document.getElementById('search').value.trim().toUpperCase();if(!/^[A-Z]\d[A-Z]$/.test(c))return document.getElementById('status').textContent='Enter a 3-character FSA such as J4K.';select(c,true)};
+document.getElementById('search').onkeydown=e=>{if(e.key==='Enter')document.getElementById('find').click()};document.getElementById('search').oninput=e=>e.target.value=e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,3);
+document.getElementById('addLayer').onclick=()=>{const p=['#3478d4','#2f9d68','#8a5bd7','#e08a2d','#d64c4c','#158c98','#b34c87'];state.layers.push({id:uid(),name:`Territory ${state.layers.length+1}`,color:p[state.layers.length%p.length],visible:true});persist();renderLayers();renderEditor()};
+document.getElementById('save').onclick=()=>{if(!selected)return;rec(selected).note=document.getElementById('note').value;persist();document.getElementById('status').textContent=`Saved ${selected}.`};document.getElementById('clear').onclick=()=>{if(!selected)return;state.fsas[selected]={layers:[],note:''};persist();renderEditor();refresh()};
+document.getElementById('export').onclick=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='fsa-territories-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+document.getElementById('reset').onclick=()=>{if(!confirm('Reset all layers, assignments and notes?'))return;state=defaultState();selected=null;persist();document.getElementById('editor').style.display='none';renderLayers();refresh();document.getElementById('status').textContent='Map reset.'};
+renderLayers();loadData();
+</script>
+</body>
+</html>
